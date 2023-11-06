@@ -9,6 +9,11 @@ cc_test_old(pattern_rewrite_test SRCS pattern_rewrite_test.cc DEPS
             ${PATTERN_REWRITE_TEST_DEPS})
 
 cc_test(
+  auto_mixed_precision_test
+  SRCS auto_mixed_precision_test.cc
+  DEPS auto_mixed_precision_pass_pir gtest)
+
+cc_test(
   drr_test
   SRCS drr_test.cc
   DEPS drr pir_transforms)
