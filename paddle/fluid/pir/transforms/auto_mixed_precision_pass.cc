@@ -35,8 +35,6 @@
 #include "paddle/fluid/pir/dialect/operator/ir/pd_op.h"
 
 #include "paddle/fluid/framework/convert_utils.h"
-#include "paddle/fluid/framework/new_executor/interpretercore.h"
-#include "paddle/fluid/framework/scope.h"
 
 #include "paddle/fluid/pir/dialect/operator/ir/op_dialect.h"
 #include "paddle/fluid/pir/dialect/operator/ir/op_type.h"
@@ -68,15 +66,15 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
     SetDefaultBlacklist();
   }
 
-  void SetDefaultBlacklist() const {
-    // black_list_.insert({
-    //   paddle::dialect::ExpOp::name(),
-    //   paddle::dialect::SquareOp::name(),
-    //   paddle::dialect::LogOp::name(),
-    //   paddle::dialect::Mean::name(),
-    //   paddle::dialect::Sum::name(),
-    //   paddle::dialect::SigmoidCrossEntropyWithLogitsOp::name()
-    // })
+  void SetDefaultBlacklist() {
+    black_list_.insert({
+        paddle::dialect::ExpOp::name(),
+        paddle::dialect::SquareOp::name(),
+        paddle::dialect::LogOp::name(),
+        // paddle::dialect::Mean::name(),
+        // paddle::dialect::Sum::name(),
+        paddle::dialect::SigmoidCrossEntropyWithLogitsOp::name(),
+    });
   }
 
   void SetDefaultWhitelist() const { return; }
@@ -101,6 +99,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
                           phi::Backend backend,
                           phi::DataType precision) const {
     auto op_type = op->name();
+    std::cout << op_type << std::endl;
 
     // if the op is in white list, return true
     if (white_list_.count(op_type)) {
@@ -114,7 +113,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
 
     // if the op is not in black list, and not in white list, check if the op
     // support low precision
-    return KernelSupportPrecision("test", backend, precision);
+    return KernelSupportPrecision(op_type, backend, precision);
   }
 
   bool ValueInPrecision(pir::Value value, phi::DataType precision) const {
@@ -200,8 +199,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       case phi::AllocationType::XPU:
         return phi::Backend::XPU;
       default:
-        PADDLE_THROW(paddle::platform::errors::InvalidArgument(
-            "Cannot convert place(%d).", static_cast<int>(place.GetType())));
+        return phi::Backend::UNDEFINED;
     }
     return phi::Backend::UNDEFINED;
   }
