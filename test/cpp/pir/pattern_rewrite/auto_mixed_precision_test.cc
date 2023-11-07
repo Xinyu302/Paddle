@@ -27,39 +27,60 @@
 #include "paddle/pir/transforms/dead_code_elimination_pass.h"
 
 void BuildProgram(pir::Builder &builder) {  // NOLINT
-  paddle::dialect::FullOp full_input_op1 =
-      builder.Build<paddle::dialect::FullOp>(std::vector<int64_t>{32, 32}, 1.5);
-  paddle::dialect::FullOp full_weight_op1 =
-      builder.Build<paddle::dialect::FullOp>(std::vector<int64_t>{32, 32}, 1.5);
-  paddle::dialect::FullOp full_bias_op1 =
-      builder.Build<paddle::dialect::FullOp>(std::vector<int64_t>{32}, 1.0);
+  paddle::dialect::FullOp full_input_op =
+      builder.Build<paddle::dialect::FullOp>(std::vector<int64_t>{4, 3, 16, 16},
+                                             1.5,
+                                             phi::DataType::FLOAT32,
+                                             phi::CPUPlace());
 
-  paddle::dialect::MatmulOp matmul_op1 =
-      builder.Build<paddle::dialect::MatmulOp>(full_input_op1.out(),
-                                               full_weight_op1.out());
-  paddle::dialect::AddOp add_op1 = builder.Build<paddle::dialect::AddOp>(
-      matmul_op1.out(), full_bias_op1.out());
+  paddle::dialect::FullOp full_filter_op =
+      builder.Build<paddle::dialect::FullOp>(std::vector<int64_t>{64, 3, 3, 3},
+                                             1.5,
+                                             phi::DataType::FLOAT32,
+                                             phi::CPUPlace());
 
-  paddle::dialect::FullOp full_d_weight_op1 =
-      builder.Build<paddle::dialect::FullOp>(std::vector<int64_t>{32, 32}, 1.5);
+  paddle::dialect::FullOp full_mean_op = builder.Build<paddle::dialect::FullOp>(
+      std::vector<int64_t>{64}, 1.5, phi::DataType::FLOAT32, phi::CPUPlace());
 
-  paddle::dialect::FullOp full_d_out_op1 =
-      builder.Build<paddle::dialect::FullOp>(std::vector<int64_t>{32, 32}, 1.5);
+  paddle::dialect::FullOp full_variance_op =
+      builder.Build<paddle::dialect::FullOp>(std::vector<int64_t>{64},
+                                             1.5,
+                                             phi::DataType::FLOAT32,
+                                             phi::CPUPlace());
 
-  paddle::dialect::AddGradOp add_grad_op1 =
-      builder.Build<paddle::dialect::AddGradOp>(
-          matmul_op1.out(), full_bias_op1.out(), full_d_out_op1.out());
+  paddle::dialect::FullOp full_scale_op =
+      builder.Build<paddle::dialect::FullOp>(std::vector<int64_t>{64},
+                                             1.5,
+                                             phi::DataType::FLOAT32,
+                                             phi::CPUPlace());
 
-  paddle::dialect::MatmulGradOp matmul_grad_op1 =
-      builder.Build<paddle::dialect::MatmulGradOp>(
-          full_input_op1.out(), full_weight_op1.out(), add_grad_op1.x_grad());
+  paddle::dialect::FullOp full_bias_op = builder.Build<paddle::dialect::FullOp>(
+      std::vector<int64_t>{64}, 1.5, phi::DataType::FLOAT32, phi::CPUPlace());
 
-  paddle::dialect::Add_Op add__op1 = builder.Build<paddle::dialect::Add_Op>(
-      full_d_weight_op1.out(), matmul_grad_op1.y_grad());
+  paddle::dialect::Conv2dOp conv2d_op =
+      builder.Build<paddle::dialect::Conv2dOp>(full_input_op.out(),
+                                               full_filter_op.out());
 
-  builder.Build<paddle::dialect::FetchOp>(add_op1.out(), "out", 0);
-  builder.Build<paddle::dialect::FetchOp>(add_grad_op1.y_grad(), "dbias", 1);
-  builder.Build<paddle::dialect::FetchOp>(add__op1.out(), "dweight", 2);
+  paddle::dialect::BatchNormOp batch_norm_op =
+      builder.Build<paddle::dialect::BatchNormOp>(conv2d_op.out(),
+                                                  full_mean_op.out(),
+                                                  full_variance_op.out(),
+                                                  full_scale_op.out(),
+                                                  full_bias_op.out(),
+                                                  true,
+                                                  0.9,
+                                                  1e-6,
+                                                  "NCHW",
+                                                  false,
+                                                  false);
+
+  auto transpose1_op = builder.Build<paddle::dialect::TransposeOp>(
+      batch_norm_op.out(), std::vector<int>{0, 2, 3, 1});
+
+  auto transpose2_op = builder.Build<paddle::dialect::TransposeOp>(
+      transpose1_op.out(), std::vector<int>{0, 3, 1, 2});
+
+  builder.Build<paddle::dialect::FetchOp>(transpose2_op.out(), "out", 0);
 }
 
 TEST(AutoMixedPrecisonTest, MixedPrecisionTest) {
@@ -70,7 +91,7 @@ TEST(AutoMixedPrecisonTest, MixedPrecisionTest) {
   pir::Builder builder = pir::Builder(ctx, program.block());
   BuildProgram(builder);
 
-  EXPECT_EQ(program.block()->size(), 13u);
+  EXPECT_EQ(program.block()->size(), 11u);
 
   pir::PassManager pm(ctx);
   pm.AddPass(pir::CreateAutoMixedPrecisionPass());

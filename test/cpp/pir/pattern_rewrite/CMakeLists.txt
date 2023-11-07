@@ -13,7 +13,7 @@ cc_test_old(
   SRCS
   auto_mixed_precision_test.cc
   DEPS
-  auto_mixed_precision_pass_pir
+  pd_auto_mixed_precision_pass
   transform_general_functions
   gtest
   pd_op_dialect
