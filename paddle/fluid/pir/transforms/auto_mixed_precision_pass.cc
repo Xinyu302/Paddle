@@ -65,6 +65,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
         paddle::dialect::ExpOp::name(),
         paddle::dialect::SquareOp::name(),
         paddle::dialect::LogOp::name(),
+        paddle::dialect::FetchOp::name(),
 
         // paddle::dialect::Mean::name(),
         // paddle::dialect::Sum::name(),
@@ -83,7 +84,6 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
 
   bool Match(pir::Operation* op) const override {
     if (op->isa<pir::GetParameterOp>() || op->isa<pir::SetParameterOp>() ||
-        op->isa<paddle::dialect::FetchOp>() ||
         op->isa<paddle::dialect::CastOp>())
       return false;
 
@@ -138,13 +138,11 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
 
     // if the op is in white list, return true
     if (white_list_.count(op_type)) {
-      std::cout << "in white list" << std::endl;
       return true;
     }
 
     // if the op is in black list, return false
     if (black_list_.count(op_type)) {
-      std::cout << "in black list" << std::endl;
       return false;
     }
 
@@ -163,6 +161,8 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
     // if the op support low precision
     if (OpSupportPrecision(op, backend_, low_precision_)) {
       // change result's dtype to low precision
+      std::cout << "change result's dtype to low precision " << op->name()
+                << std::endl;
       for (auto result : op->results()) {
         paddle::dialect::DenseTensorType origin_type =
             result.type().dyn_cast<paddle::dialect::DenseTensorType>();
