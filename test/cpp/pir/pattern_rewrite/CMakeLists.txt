@@ -8,16 +8,8 @@ endif()
 cc_test_old(pattern_rewrite_test SRCS pattern_rewrite_test.cc DEPS
             ${PATTERN_REWRITE_TEST_DEPS})
 
-cc_test_old(
-  auto_mixed_precision_test
-  SRCS
-  auto_mixed_precision_test.cc
-  DEPS
-  pd_auto_mixed_precision_pass
-  transform_general_functions
-  gtest
-  pd_op_dialect
-  pir)
+cc_test_old(auto_mixed_precision_test SRCS auto_mixed_precision_test.cc DEPS
+            ${PATTERN_REWRITE_TEST_DEPS})
 
 cc_test(
   drr_test
