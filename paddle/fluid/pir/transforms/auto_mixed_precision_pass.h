@@ -15,12 +15,15 @@
 #pragma once
 
 #include <memory>
+#include "paddle/phi/common/backend.h"
+#include "paddle/phi/common/data_type.h"
 #include "paddle/pir/core/dll_decl.h"
 
 namespace pir {
 
 class Pass;
 
-IR_API std::unique_ptr<Pass> CreateAutoMixedPrecisionPass();
+IR_API std::unique_ptr<Pass> CreateAutoMixedPrecisionPass(
+    const phi::Backend& backend, const phi::DataType& low_precision);
 
 }  // namespace pir

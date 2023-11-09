@@ -27,7 +27,9 @@
 #include "paddle/fluid/pir/dialect/operator/utils/utils.h"
 #include "paddle/fluid/pir/transforms/transform_general_functions.h"
 
+#include "paddle/phi/common/backend.h"
 #include "paddle/phi/common/bfloat16.h"
+#include "paddle/phi/common/data_type.h"
 #include "paddle/phi/common/float16.h"
 #include "paddle/phi/common/place.h"
 #include "paddle/phi/core/dense_tensor.h"
@@ -50,12 +52,13 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
  public:
   AutoMixedPrecisionPattern(
       pir::IrContext* context,
-
+      const phi::Backend& backend,
+      const phi::DataType& low_precision,
       pir::PatternBenefit benefit = 1,
       const std::vector<std::string>& generated_names = {})
       : RewritePattern(MatchAnyOpTypeTag(), benefit, context, generated_names) {
-    low_precision_ = phi::DataType::FLOAT16;  // should be set by user
-    backend_ = phi::Backend::CPU;             // should be set by user
+    low_precision_ = low_precision;  // should be set by user
+    backend_ = backend;              // should be set by user
     SetDefaultBlacklist();
     SetDefaultWhitelist();
   }
@@ -275,11 +278,15 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
 
 class AutoMixedPrecisionPass : public pir::Pass {
  public:
-  AutoMixedPrecisionPass() : pir::Pass("auto_mixed_precision_pass", 1) {}
+  AutoMixedPrecisionPass(const phi::Backend& backend,
+                         const phi::DataType& low_precision)
+      : pir::Pass("auto_mixed_precision_pass", 1),
+        backend_(backend),
+        low_precision_(low_precision) {}
 
   bool Initialize(pir::IrContext* context) override {
     pir::RewritePatternSet ps(context);
-    ps.Add<AutoMixedPrecisionPattern>(context);
+    ps.Add<AutoMixedPrecisionPattern>(context, backend_, low_precision_);
     patterns_ = pir::FrozenRewritePatternSet(std::move(ps));
     return true;
   }
@@ -297,14 +304,17 @@ class AutoMixedPrecisionPass : public pir::Pass {
 
  private:
   pir::FrozenRewritePatternSet patterns_;
+  phi::Backend backend_;
+  phi::DataType low_precision_;
 };
 
 }  // namespace
 
 namespace pir {
 
-std::unique_ptr<Pass> CreateAutoMixedPrecisionPass() {
-  return std::make_unique<AutoMixedPrecisionPass>();
+std::unique_ptr<Pass> CreateAutoMixedPrecisionPass(
+    const phi::Backend& backend, const phi::DataType& low_precision) {
+  return std::make_unique<AutoMixedPrecisionPass>(backend, low_precision);
 }
 
 }  // namespace pir
