@@ -19,6 +19,7 @@
 
 #include "paddle/fluid/framework/convert_utils.h"
 #include "paddle/fluid/framework/operator.h"
+#include "paddle/fluid/pir/dialect/operator/ir/op_attribute.h"
 #include "paddle/fluid/pir/dialect/operator/ir/op_dialect.h"
 #include "paddle/fluid/pir/dialect/operator/ir/op_type.h"
 #include "paddle/fluid/pir/dialect/operator/ir/pd_op.h"
@@ -140,7 +141,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
 
     auto kernel_fn_str = GetKernelFnStr(op_info_parser.get(), op);
     phi::KernelKey kernel_key(backend, phi::DataLayout::ALL_LAYOUT, precision);
-    auto phi_kernel = phi::KernelFactory::Instance()::SelectKernelWithGPUDNN(
+    auto phi_kernel = phi::KernelFactory::Instance().SelectKernelWithGPUDNN(
         kernel_fn_str, kernel_key);
 
     return phi_kernel;
@@ -196,7 +197,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       auto input_defs = args_def.input_defs();
       auto output_defs = args_def.output_defs();
 
-      for (int i = 0; i < op->num_results(); i++) {
+      for (size_t i = 0; i < op->num_results(); i++) {
         auto result = op->result(i);
         paddle::dialect::DenseTensorType origin_type =
             result.type().dyn_cast<paddle::dialect::DenseTensorType>();
@@ -217,7 +218,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       // fetch and feed
 
       // if any of the op's input is not in low precision, insert cast op
-      for (int i = 0; i < op->num_operands(); i++) {
+      for (size_t i = 0; i < op->num_operands(); i++) {
         auto operand = op->operand(i);
         auto in_phi_dtype = input_defs[i].dtype;
         if (!ValueInPrecision(operand.source(), in_phi_dtype)) {
