@@ -129,12 +129,30 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
     return kernel_fn_str;
   }
 
+  phi::Kernel GetPhiKernelSupportPrecision(pir::Operation* op,
+                                           phi::Backend backend,
+                                           phi::DataType precision) const {
+    auto op_type = op->name();
+    std::cout << "op name " << op->name() << std::endl;
+
+    // no need for this?
+    auto op_info_parser = GetOpYamlInfoParser(op);
+
+    auto kernel_fn_str = GetKernelFnStr(op_info_parser.get(), op);
+    phi::KernelKey kernel_key(backend, phi::DataLayout::ALL_LAYOUT, precision);
+    auto phi_kernel = phi::KernelFactory::Instance()::SelectKernelWithGPUDNN(
+        kernel_fn_str, kernel_key);
+
+    return phi_kernel;
+  }
+
   bool OpSupportPrecision(pir::Operation* op,
                           phi::Backend backend,
                           phi::DataType precision) const {
     auto op_type = op->name();
     std::cout << "op name " << op->name() << std::endl;
 
+    // no need for this?
     auto op_info_parser = GetOpYamlInfoParser(op);
 
     auto kernel_fn_str = GetKernelFnStr(op_info_parser.get(), op);
@@ -166,28 +184,47 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       // change result's dtype to low precision
       std::cout << "change result's dtype to low precision " << op->name()
                 << std::endl;
-      for (auto result : op->results()) {
+
+      if (op->HasAttribute("dtype")) {
+        pir::Attribute attr_dtype = paddle::dialect::DataTypeAttribute::get(
+            pir::IrContext::Instance(), low_precision_);
+        op->set_attribute("dtype", attr_dtype);
+      }
+      auto phi_kernel =
+          GetPhiKernelSupportPrecision(op, backend_, low_precision_);
+      auto args_def = phi_kernel.args_def();
+      auto input_defs = args_def.input_defs();
+      auto output_defs = args_def.output_defs();
+
+      for (int i = 0; i < op->num_results(); i++) {
+        auto result = op->result(i);
         paddle::dialect::DenseTensorType origin_type =
             result.type().dyn_cast<paddle::dialect::DenseTensorType>();
-        (void)origin_type;
+        auto out_phi_dtype = output_defs[i].dtype;
         pir::Type new_type = paddle::dialect::DenseTensorType::get(
             pir::IrContext::Instance(),
-            paddle::dialect::TransToIrDataType(low_precision_),
+            paddle::dialect::TransToIrDataType(out_phi_dtype),
             origin_type.dims(),
             origin_type.data_layout(),
             origin_type.lod(),
             origin_type.offset());
-        (void)new_type;
+
         result.set_type(new_type);
       }
 
+      // out_dtype in_dtype attribute need modify
+
+      // fetch and feed
+
       // if any of the op's input is not in low precision, insert cast op
-      for (auto operand : op->operands()) {
-        if (!ValueInPrecision(operand.source(), low_precision_)) {
+      for (int i = 0; i < op->num_operands(); i++) {
+        auto operand = op->operand(i);
+        auto in_phi_dtype = input_defs[i].dtype;
+        if (!ValueInPrecision(operand.source(), in_phi_dtype)) {
           rewriter.SetInsertionPoint(op);  // before op
           paddle::dialect::CastOp cast_op =
               rewriter.Build<paddle::dialect::CastOp>(operand.source(),
-                                                      low_precision_);
+                                                      in_phi_dtype);
 
           operand.set_source(cast_op->result(0));
         }
