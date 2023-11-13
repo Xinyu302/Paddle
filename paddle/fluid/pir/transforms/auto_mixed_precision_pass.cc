@@ -167,31 +167,31 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       return false;
     }
 
-    std::cout << KernelSupportPrecision(
-                     "batch_norm", phi::Backend::CPU, phi::DataType::FLOAT32)
-              << std::endl;
-    std::cout << KernelSupportPrecision(
-                     "batch_norm", phi::Backend::GPU, phi::DataType::FLOAT32)
-              << std::endl;
-    std::cout << KernelSupportPrecision(
-                     "batch_norm", phi::Backend::CPU, phi::DataType::FLOAT16)
-              << std::endl;
-    std::cout << KernelSupportPrecision(
-                     "batch_norm", phi::Backend::GPU, phi::DataType::FLOAT16)
-              << std::endl;
+    // std::cout << KernelSupportPrecision(
+    //                  "batch_norm", phi::Backend::CPU, phi::DataType::FLOAT32)
+    //           << std::endl;
+    // std::cout << KernelSupportPrecision(
+    //                  "batch_norm", phi::Backend::GPU, phi::DataType::FLOAT32)
+    //           << std::endl;
+    // std::cout << KernelSupportPrecision(
+    //                  "batch_norm", phi::Backend::CPU, phi::DataType::FLOAT16)
+    //           << std::endl;
+    // std::cout << KernelSupportPrecision(
+    //                  "batch_norm", phi::Backend::GPU, phi::DataType::FLOAT16)
+    //           << std::endl;
 
-    std::cout << KernelSupportPrecision(
-                     "conv2d", phi::Backend::CPU, phi::DataType::FLOAT32)
-              << std::endl;
-    std::cout << KernelSupportPrecision(
-                     "conv2d", phi::Backend::GPU, phi::DataType::FLOAT32)
-              << std::endl;
-    std::cout << KernelSupportPrecision(
-                     "conv2d", phi::Backend::CPU, phi::DataType::FLOAT16)
-              << std::endl;
-    std::cout << KernelSupportPrecision(
-                     "square", phi::Backend::GPU, phi::DataType::FLOAT16)
-              << std::endl;
+    // std::cout << KernelSupportPrecision(
+    //                  "conv2d", phi::Backend::CPU, phi::DataType::FLOAT32)
+    //           << std::endl;
+    // std::cout << KernelSupportPrecision(
+    //                  "conv2d", phi::Backend::GPU, phi::DataType::FLOAT32)
+    //           << std::endl;
+    // std::cout << KernelSupportPrecision(
+    //                  "conv2d", phi::Backend::CPU, phi::DataType::FLOAT16)
+    //           << std::endl;
+    // std::cout << KernelSupportPrecision(
+    //                  "square", phi::Backend::GPU, phi::DataType::FLOAT16)
+    //           << std::endl;
     // if the op is not in black list, and not in white list, check if the op
     // support low precision
     return KernelSupportPrecision(kernel_fn_str, backend, precision);
@@ -285,10 +285,6 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       phi::DataType data_type,
       phi::DataLayout layout = phi::DataLayout::ALL_LAYOUT) const {
     const auto& kernels = phi::KernelFactory::Instance().kernels();
-    std::cout << kernels.size() << std::endl;
-    for (auto [k, v] : kernels) {
-      std::cout << "kernel name " << k << std::endl;
-    }
     if (kernels.count(op_type) == 0) {
       return false;
     }
@@ -316,7 +312,6 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       phi::DataType precision,
       phi::DataLayout layout = phi::DataLayout::ALL_LAYOUT) const {
     auto phi_op_type = phi::TransToPhiKernelName(op_type);
-    std::cout << "after tranlate to phi_op_type " << phi_op_type << std::endl;
 
     bool support =
         PhiKernelSupportPrecision(phi_op_type, backend, precision, layout);
@@ -359,6 +354,11 @@ class AutoMixedPrecisionPass : public pir::Pass {
   }
 
   void Run(pir::Operation* op) override {
+    const auto& kernels = phi::KernelFactory::Instance().kernels();
+    std::cout << "all kernel size = " << kernels.size() << std::endl;
+    for (auto [k, v] : kernels) {
+      std::cout << "kernel name " << k << std::endl;
+    }
     pir::GreedyRewriteConfig cfg;
     cfg.use_top_down_traversal = true;
     cfg.max_iterations = 10;
