@@ -237,15 +237,19 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       // if any of the op's input is not in low precision, insert cast op
       LOG(INFO) << "Handle input, if dtype doesn't match, insert CastOp"
                 << std::endl;
-      PADDLE_ENFORCE_EQ(
-          op->num_operands(),
-          input_defs.size(),
-          phi::errors::PreconditionNotMet(
-              "op [%s] kernel input args defs should equal op inputs",
-              op->name()));
+      // PADDLE_ENFORCE_EQ(
+      //     op->num_operands(),
+      //     input_defs.size(),
+      //     phi::errors::PreconditionNotMet(
+      //         "op [%s] kernel input args defs should equal op inputs",
+      //         op->name()));
+      int cnt = 0;
       for (size_t i = 0; i < op->num_operands(); i++) {
         auto operand = op->operand(i);
-        auto in_phi_dtype = input_defs[i].dtype;
+        paddle::dialect::DenseTensorType origin_type =
+            operand.type().dyn_cast<paddle::dialect::DenseTensorType>();
+        if (!origin_type) continue;
+        auto in_phi_dtype = input_defs[cnt++].dtype;
         if (!ValueInPrecision(operand.source(), in_phi_dtype)) {
           rewriter.SetInsertionPoint(op);  // before op
           paddle::dialect::CastOp cast_op =
