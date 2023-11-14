@@ -155,6 +155,8 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
 
     auto kernel_fn_str = GetKernelFnStr(op_info_parser.get(), op);
 
+    std::cout << "now check kernel " << kernel_fn_str << std::endl;
+
     // if the op is in white list, return true
     // if (white_list_.count(op_type)) {
     //   return true;
@@ -353,11 +355,12 @@ class AutoMixedPrecisionPass : public pir::Pass {
   }
 
   void Run(pir::Operation* op) override {
-    const auto& kernels = phi::KernelFactory::Instance().kernels();
-    std::cout << "all kernel size = " << kernels.size() << std::endl;
-    for (auto [k, v] : kernels) {
-      std::cout << "kernel name " << k << std::endl;
-    }
+    // const auto& kernels = phi::KernelFactory::Instance().kernels();
+    // std::cout << "all kernel size = " << kernels.size() << std::endl;
+    // for (auto [k, v] : kernels) {
+    //   std::cout << "kernel name " << k << std::endl;
+    // }
+    LOG(INFO) << "Run pass" << std::endl;
     pir::GreedyRewriteConfig cfg;
     cfg.use_top_down_traversal = true;
     cfg.max_iterations = 10;
