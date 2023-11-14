@@ -53,13 +53,13 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
  public:
   AutoMixedPrecisionPattern(
       pir::IrContext* context,
-      const phi::Backend& backend,
-      const phi::DataType& low_precision,
+      const phi::Place& place,
+      const phi::DataType& precision_mode,
       pir::PatternBenefit benefit = 1,
       const std::vector<std::string>& generated_names = {})
       : RewritePattern(MatchAnyOpTypeTag(), benefit, context, generated_names) {
-    low_precision_ = low_precision;  // should be set by user
-    backend_ = backend;              // should be set by user
+    precision_mode_ = precision_mode;  // should be set by user
+    place_ = place;                    // should be set by user
     SetDefaultBlacklist();
     SetDefaultWhitelist();
   }
@@ -78,11 +78,9 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
   }
 
   void SetDefaultWhitelist() {
-    white_list_.insert({
-        paddle::dialect::FullOp::name(),
-        paddle::dialect::Conv2dOp::name(),
-        paddle::dialect::TransposeOp::name(),
-    });
+    white_list_.insert({paddle::dialect::FullOp::name(),
+                        paddle::dialect::Conv2dOp::name(),
+                        paddle::dialect::TransposeOp::name()});
     return;
   }
 
@@ -204,19 +202,20 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
 
   void Rewrite(pir::Operation* op,
                pir::PatternRewriter& rewriter) const override {  // NOLINT
+    phi::Backend backend = ConvertPlaceToBackend(place_);
     // if the op support low precision
-    if (OpSupportPrecision(op, backend_, low_precision_)) {
+    if (OpSupportPrecision(op, backend, precision_mode_)) {
       // change result's dtype to low precision
       std::cout << "change result's dtype to low precision " << op->name()
                 << std::endl;
 
       if (op->HasAttribute("dtype")) {
         pir::Attribute attr_dtype = paddle::dialect::DataTypeAttribute::get(
-            pir::IrContext::Instance(), low_precision_);
+            pir::IrContext::Instance(), precision_mode_);
         op->set_attribute("dtype", attr_dtype);
       }
       auto phi_kernel =
-          GetPhiKernelSupportPrecision(op, backend_, low_precision_);
+          GetPhiKernelSupportPrecision(op, backend, precision_mode_);
       auto args_def = phi_kernel.args_def();
       auto input_defs = args_def.input_defs();
       auto output_defs = args_def.output_defs();
@@ -259,7 +258,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       for (auto operand : op->operands()) {
         // get the op's dtype
         auto result_dtype = pir::GetDataTypeFromValue(op->result(0));
-        if (ValueInPrecision(operand.source(), low_precision_)) {
+        if (ValueInPrecision(operand.source(), precision_mode_)) {
           rewriter.SetInsertionPoint(op);  // before op
           paddle::dialect::CastOp cast_op =
               rewriter.Build<paddle::dialect::CastOp>(
@@ -275,9 +274,9 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
  private:
   std::unordered_set<std::string> black_list_;
   std::unordered_set<std::string> white_list_;
-  phi::DataType low_precision_{phi::DataType::UNDEFINED};
+  phi::DataType precision_mode_{phi::DataType::UNDEFINED};
 
-  phi::Backend backend_{phi::Backend::UNDEFINED};
+  phi::Place place_;
 
   bool PhiKernelSupportPrecision(
       const std::string& op_type,
@@ -340,15 +339,15 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
 
 class AutoMixedPrecisionPass : public pir::Pass {
  public:
-  AutoMixedPrecisionPass(const phi::Backend& backend,
-                         const phi::DataType& low_precision)
+  AutoMixedPrecisionPass(const phi::Place& place,
+                         const phi::DataType& precision_mode)
       : pir::Pass("auto_mixed_precision_pass", 1),
-        backend_(backend),
-        low_precision_(low_precision) {}
+        place_(place),
+        precision_mode_(precision_mode) {}
 
   bool Initialize(pir::IrContext* context) override {
     pir::RewritePatternSet ps(context);
-    ps.Add<AutoMixedPrecisionPattern>(context, backend_, low_precision_);
+    ps.Add<AutoMixedPrecisionPattern>(context, place_, precision_mode_);
     patterns_ = pir::FrozenRewritePatternSet(std::move(ps));
     return true;
   }
@@ -371,8 +370,8 @@ class AutoMixedPrecisionPass : public pir::Pass {
 
  private:
   pir::FrozenRewritePatternSet patterns_;
-  phi::Backend backend_;
-  phi::DataType low_precision_;
+  phi::Place place_;
+  phi::DataType precision_mode_;
 };
 
 }  // namespace
@@ -380,8 +379,8 @@ class AutoMixedPrecisionPass : public pir::Pass {
 namespace pir {
 
 std::unique_ptr<Pass> CreateAutoMixedPrecisionPass(
-    const phi::Backend& backend, const phi::DataType& low_precision) {
-  return std::make_unique<AutoMixedPrecisionPass>(backend, low_precision);
+    const phi::Place& place, const phi::DataType& precision_mode) {
+  return std::make_unique<AutoMixedPrecisionPass>(place, precision_mode);
 }
 
 }  // namespace pir

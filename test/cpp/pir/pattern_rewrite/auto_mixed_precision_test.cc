@@ -94,7 +94,7 @@ TEST(AutoMixedPrecisonTest, MixedPrecisionTest) {
   EXPECT_EQ(program.block()->size(), 11u);
 
   pir::PassManager pm(ctx);
-  pm.AddPass(pir::CreateAutoMixedPrecisionPass(phi::Backend::CPU,
+  pm.AddPass(pir::CreateAutoMixedPrecisionPass(phi::GPUPlace(),
                                                phi::DataType::FLOAT16));
   pm.AddPass(pir::CreateDeadCodeEliminationPass());
   // pm.EnablePassTiming();
