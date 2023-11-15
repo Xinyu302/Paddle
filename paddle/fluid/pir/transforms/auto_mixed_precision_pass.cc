@@ -55,11 +55,13 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       pir::IrContext* context,
       const phi::Place& place,
       const phi::DataType& precision_mode,
+      bool enable_low_precision_io = false,
       pir::PatternBenefit benefit = 1,
       const std::vector<std::string>& generated_names = {})
       : RewritePattern(MatchAnyOpTypeTag(), benefit, context, generated_names) {
     precision_mode_ = precision_mode;  // should be set by user
     place_ = place;                    // should be set by user
+    enable_low_precision_io_ = enable_low_precision_io;
     SetDefaultBlacklist();
     SetDefaultWhitelist();
   }
@@ -69,7 +71,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
         paddle::dialect::ExpOp::name(),
         paddle::dialect::SquareOp::name(),
         paddle::dialect::LogOp::name(),
-        paddle::dialect::FetchOp::name(),
+        // paddle::dialect::FetchOp::name(),
 
         // paddle::dialect::Mean::name(),
         // paddle::dialect::Sum::name(),
@@ -78,16 +80,30 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
   }
 
   void SetDefaultWhitelist() {
-    white_list_.insert({paddle::dialect::FullOp::name(),
-                        paddle::dialect::Conv2dOp::name(),
-                        paddle::dialect::TransposeOp::name()});
-    return;
+    // white_list_.insert({paddle::dialect::FullOp::name(),
+    //                     paddle::dialect::Conv2dOp::name(),
+    //                     paddle::dialect::TransposeOp::name()});
+    // return;
+    if (enable_low_precision_io_) {
+      white_list_.insert({
+          paddle::dialect::FetchOp::name(),
+      });
+    }
   }
 
   bool Match(pir::Operation* op) const override {
+    // if enable_low_precision_io_ is true, all the op will be transformed into,
+    // input and output included
     if (op->isa<pir::GetParameterOp>() || op->isa<pir::SetParameterOp>() ||
-        op->isa<paddle::dialect::CastOp>() || op->isa<pir::ShadowOutputOp>())
+        op->isa<paddle::dialect::CastOp>())
       return false;
+
+    if (!enable_low_precision_io_) {
+      if (op->isa<paddle::dialect::FeedOp>()) return false;
+    }
+
+    // Fetch op, if enable_low_precision_io_, transform result type
+    // Otherwise, check if the op's input is in low precision
 
     // if the op didn't support low precision, and input is in low precision,
     // insert cast op if op support low precision and input is in low precision,
@@ -166,9 +182,9 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
     auto kernel_fn_str = GetKernelFnStr(op_info_parser.get(), op);
 
     // if the op is in white list, return true
-    // if (white_list_.count(op_type)) {
-    //   return true;
-    // }
+    if (white_list_.count(op_type)) {
+      return true;
+    }
 
     // if the op is in black list, return false
     if (black_list_.count(op_type)) {
@@ -183,11 +199,48 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
     return paddle::dialect::TransToPhiDataType(dtype) == precision;
   }
 
+  bool SetResultDataType(pir::Value result, phi::DataType precision) const {
+    auto origin_type =
+        result.type().dyn_cast<paddle::dialect::DenseTensorType>();
+    if (!origin_type) return false;
+    pir::Type new_type = paddle::dialect::DenseTensorType::get(
+        pir::IrContext::Instance(),
+        paddle::dialect::TransToIrDataType(precision),
+        origin_type.dims(),
+        origin_type.data_layout(),
+        origin_type.lod(),
+        origin_type.offset());
+    result.set_type(new_type);
+    return true;
+  }
+
+  // bool InsertCastOp(pir::Operation* op,
+  //                   pir::PatternRewriter& rewriter,
+  //                   pir::OpOperand operand,
+  //                   phi::DataType precision) const {
+  //   auto value = operand.source();
+  //   rewriter.set_insertion_point(op);  // before op
+  //   paddle::dialect::CastOp cast_op =
+  //       rewriter.Build<paddle::dialect::CastOp>(value, precision);
+  //   operand.set_source(cast_op->result(0));
+  //   return true;
+  // }
+
   void Rewrite(pir::Operation* op,
                pir::PatternRewriter& rewriter) const override {  // NOLINT
     LOG(INFO) << "Rewrite op " << op->name() << std::endl;
     phi::Backend backend = ConvertPlaceToBackend(place_);
     // if the op support low precision
+    auto InsertCastOp = [&rewriter](pir::Operation* op,
+                                    pir::OpOperand operand,
+                                    phi::DataType precision) {
+      auto value = operand.source();
+      rewriter.set_insertion_point(op);  // before op
+      paddle::dialect::CastOp cast_op =
+          rewriter.Build<paddle::dialect::CastOp>(value, precision);
+      operand.set_source(cast_op->result(0));
+    };
+
     if (OpSupportPrecision(op, backend, precision_mode_)) {
       // change result's dtype to low precision
       LOG(INFO) << "Change result's dtype to low precision " << op->name()
@@ -198,6 +251,16 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
             pir::IrContext::Instance(), precision_mode_);
         op->set_attribute("dtype", attr_dtype);
       }
+
+      if (op->isa<paddle::dialect::FetchOp>() ||
+          op->isa<paddle::dialect::FeedOp>()) {
+        SetResultDataType(op->result(0), precision_mode_);
+        if (op->isa<paddle::dialect::FetchOp>()) {
+          InsertCastOp(op, op->operand(0), precision_mode_);
+        }
+        return;
+      }
+
       auto phi_kernel =
           GetPhiKernelSupportPrecision(op, backend, precision_mode_);
       PADDLE_ENFORCE(
@@ -221,18 +284,8 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
 
       for (size_t i = 0; i < op->num_results(); i++) {
         auto result = op->result(i);
-        paddle::dialect::DenseTensorType origin_type =
-            result.type().dyn_cast<paddle::dialect::DenseTensorType>();
-        if (!origin_type) continue;
         phi::DataType out_phi_dtype = output_defs[i].dtype;
-        pir::Type new_type = paddle::dialect::DenseTensorType::get(
-            pir::IrContext::Instance(),
-            paddle::dialect::TransToIrDataType(out_phi_dtype),
-            origin_type.dims(),
-            origin_type.data_layout(),
-            origin_type.lod(),
-            origin_type.offset());
-        result.set_type(new_type);
+        SetResultDataType(result, out_phi_dtype);
       }
 
       // if any of the op's input is not in low precision, insert cast op
@@ -244,12 +297,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
         if (!origin_type) continue;
         auto in_phi_dtype = input_defs[i].dtype;
         if (!ValueInPrecision(operand.source(), in_phi_dtype)) {
-          rewriter.set_insertion_point(op);  // before op
-          paddle::dialect::CastOp cast_op =
-              rewriter.Build<paddle::dialect::CastOp>(operand.source(),
-                                                      in_phi_dtype);
-
-          operand.set_source(cast_op->result(0));
+          InsertCastOp(op, operand, in_phi_dtype);
         }
       }
     } else {  // current op doesn't support low precision
@@ -258,13 +306,8 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
         // get the op's dtype
         auto result_dtype = pir::GetDataTypeFromValue(op->result(0));
         if (ValueInPrecision(operand.source(), precision_mode_)) {
-          rewriter.set_insertion_point(op);  // before op
-          paddle::dialect::CastOp cast_op =
-              rewriter.Build<paddle::dialect::CastOp>(
-                  operand.source(),
-                  paddle::dialect::TransToPhiDataType(result_dtype));
-
-          operand.set_source(cast_op->result(0));
+          InsertCastOp(
+              op, operand, paddle::dialect::TransToPhiDataType(result_dtype));
         }
       }
     }
@@ -276,6 +319,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
   phi::DataType precision_mode_{phi::DataType::UNDEFINED};
 
   phi::Place place_;
+  bool enable_low_precision_io_;
 
   bool PhiKernelSupportPrecision(
       const std::string& op_type,
