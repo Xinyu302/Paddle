@@ -165,8 +165,6 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
 
     auto kernel_fn_str = GetKernelFnStr(op_info_parser.get(), op);
 
-    std::cout << "now check kernel " << kernel_fn_str << std::endl;
-
     // if the op is in white list, return true
     // if (white_list_.count(op_type)) {
     //   return true;
@@ -192,7 +190,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
     // if the op support low precision
     if (OpSupportPrecision(op, backend, precision_mode_)) {
       // change result's dtype to low precision
-      LOG(INFO) << "change result's dtype to low precision " << op->name()
+      LOG(INFO) << "Change result's dtype to low precision " << op->name()
                 << std::endl;
 
       if (op->HasAttribute("dtype")) {
@@ -200,7 +198,6 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
             pir::IrContext::Instance(), precision_mode_);
         op->set_attribute("dtype", attr_dtype);
       }
-      std::cout << "before GetPhiKernelSupportPrecision" << std::endl;
       auto phi_kernel =
           GetPhiKernelSupportPrecision(op, backend, precision_mode_);
       PADDLE_ENFORCE(
@@ -215,7 +212,6 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       auto input_defs = args_def.input_defs();
       auto output_defs = args_def.output_defs();
 
-      std::cout << "before modify outputs" << std::endl;
       PADDLE_ENFORCE_EQ(
           op->num_results(),
           output_defs.size(),
@@ -229,9 +225,6 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
             result.type().dyn_cast<paddle::dialect::DenseTensorType>();
         if (!origin_type) continue;
         phi::DataType out_phi_dtype = output_defs[i].dtype;
-        // std::cout << "try to print" << std::endl;
-        // std::cout << out_phi_dtype << std::endl;
-        // std::cout << "error before get out_phi_dtype" << std::endl;
         pir::Type new_type = paddle::dialect::DenseTensorType::get(
             pir::IrContext::Instance(),
             paddle::dialect::TransToIrDataType(out_phi_dtype),
@@ -239,22 +232,12 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
             origin_type.data_layout(),
             origin_type.lod(),
             origin_type.offset());
-        // std::cout << "error after get out_phi_dtype" << std::endl;
         result.set_type(new_type);
       }
-      // std::cout << "after modify outputs" << std::endl;
 
       // if any of the op's input is not in low precision, insert cast op
-      LOG(INFO) << "Handle input, if dtype doesn't match, insert CastOp"
-                << std::endl;
-      // PADDLE_ENFORCE_EQ(
-      //     op->num_operands(),
-      //     input_defs.size(),
-      //     phi::errors::PreconditionNotMet(
-      //         "op [%s] kernel input args defs should equal op inputs",
-      //         op->name()));
-      for (size_t i = 0; i < input_defs.size();
-           i++) {  // input_defs will always be the smaller one?
+      // input_defs will always be the smaller one?
+      for (size_t i = 0; i < input_defs.size(); i++) {
         auto operand = op->operand(i);
         paddle::dialect::DenseTensorType origin_type =
             operand.type().dyn_cast<paddle::dialect::DenseTensorType>();
@@ -338,7 +321,6 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
           phi_op_type, phi::Backend::GPUDNN, precision, layout);
     }
 
-    LOG(INFO) << "support = " << support << std::endl;
     if (!support) {
       const auto& all_kernels =
           paddle::framework::OperatorWithKernel::AllOpKernels();
