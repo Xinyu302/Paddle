@@ -86,7 +86,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
 
   bool Match(pir::Operation* op) const override {
     if (op->isa<pir::GetParameterOp>() || op->isa<pir::SetParameterOp>() ||
-        op->isa<paddle::dialect::CastOp>())
+        op->isa<paddle::dialect::CastOp>() || op->isa<pir::ShadowOutputOp>())
       return false;
 
     // if the op didn't support low precision, and input is in low precision,
@@ -135,7 +135,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
     auto op_info_parser = GetOpYamlInfoParser(op);
 
     auto kernel_fn_str = GetKernelFnStr(op_info_parser.get(), op);
-    kernel_fn_str = phi::TransToPhiKernelName(kernel_fn_str);
+    // kernel_fn_str = phi::TransToPhiKernelName(kernel_fn_str);
 
     if (backend == phi::Backend::GPU) {
       if (PhiKernelSupportPrecision(
@@ -187,6 +187,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
 
   void Rewrite(pir::Operation* op,
                pir::PatternRewriter& rewriter) const override {  // NOLINT
+    LOG(INFO) << "Rewrite op " << op->name() << std::endl;
     phi::Backend backend = ConvertPlaceToBackend(place_);
     // if the op support low precision
     if (OpSupportPrecision(op, backend, precision_mode_)) {
@@ -228,9 +229,9 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
             result.type().dyn_cast<paddle::dialect::DenseTensorType>();
         if (!origin_type) continue;
         phi::DataType out_phi_dtype = output_defs[i].dtype;
-        std::cout << "try to print" << std::endl;
-        std::cout << out_phi_dtype << std::endl;
-        std::cout << "error before get out_phi_dtype" << std::endl;
+        // std::cout << "try to print" << std::endl;
+        // std::cout << out_phi_dtype << std::endl;
+        // std::cout << "error before get out_phi_dtype" << std::endl;
         pir::Type new_type = paddle::dialect::DenseTensorType::get(
             pir::IrContext::Instance(),
             paddle::dialect::TransToIrDataType(out_phi_dtype),
@@ -238,10 +239,10 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
             origin_type.data_layout(),
             origin_type.lod(),
             origin_type.offset());
-        std::cout << "error after get out_phi_dtype" << std::endl;
+        // std::cout << "error after get out_phi_dtype" << std::endl;
         result.set_type(new_type);
       }
-      std::cout << "after modify outputs" << std::endl;
+      // std::cout << "after modify outputs" << std::endl;
 
       // if any of the op's input is not in low precision, insert cast op
       LOG(INFO) << "Handle input, if dtype doesn't match, insert CastOp"
@@ -325,8 +326,10 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       phi::Backend backend,
       phi::DataType precision,
       phi::DataLayout layout = phi::DataLayout::ALL_LAYOUT) const {
-    auto phi_op_type = phi::TransToPhiKernelName(op_type);
-    std::cout << "phi_op_type = " << phi_op_type << std::endl;
+    // it will return deprecated
+    // auto phi_op_type = phi::TransToPhiKernelName(op_type);
+    auto& phi_op_type = op_type;
+    LOG(INFO) << "phi_op_type = " << phi_op_type << std::endl;
 
     bool support =
         PhiKernelSupportPrecision(phi_op_type, backend, precision, layout);
@@ -335,7 +338,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
           phi_op_type, phi::Backend::GPUDNN, precision, layout);
     }
 
-    std::cout << "support = " << support << std::endl;
+    LOG(INFO) << "support = " << support << std::endl;
     if (!support) {
       const auto& all_kernels =
           paddle::framework::OperatorWithKernel::AllOpKernels();
@@ -376,7 +379,6 @@ class AutoMixedPrecisionPass : public pir::Pass {
     // for (auto [k, v] : kernels) {
     //   std::cout << "kernel name " << k << std::endl;
     // }
-    LOG(INFO) << "Run pass" << std::endl;
     pir::GreedyRewriteConfig cfg;
     cfg.use_top_down_traversal = true;
     cfg.max_iterations = 10;
