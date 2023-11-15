@@ -131,23 +131,28 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
   phi::Kernel GetPhiKernelSupportPrecision(pir::Operation* op,
                                            phi::Backend backend,
                                            phi::DataType precision) const {
-    auto op_type = op->name();
-    std::cout << "op name " << op->name() << std::endl;
-
     // no need for this?
     auto op_info_parser = GetOpYamlInfoParser(op);
 
     auto kernel_fn_str = GetKernelFnStr(op_info_parser.get(), op);
     kernel_fn_str = phi::TransToPhiKernelName(kernel_fn_str);
-    // use SelectKernelWithGPUDNN, will search both GPU and GPUDNN backend
 
-    if (backend == phi::Backend::GPU) backend = phi::Backend::GPUDNN;
-
-    phi::KernelKey kernel_key(backend, phi::DataLayout::ALL_LAYOUT, precision);
-    auto phi_kernel = phi::KernelFactory::Instance().SelectKernelWithGPUDNN(
-        kernel_fn_str, kernel_key);
-
-    return phi_kernel;
+    if (backend == phi::Backend::GPU) {
+      if (PhiKernelSupportPrecision(
+              kernel_fn_str, phi::Backend::GPUDNN, precision)) {
+        phi::KernelKey kernel_key(
+            phi::Backend::GPUDNN, phi::DataLayout::ALL_LAYOUT, precision);
+        return phi::KernelFactory::Instance().SelectKernel(kernel_fn_str,
+                                                           kernel_key);
+      }
+      phi::KernelKey kernel_key(
+          phi::Backend::GPU, phi::DataLayout::ALL_LAYOUT, precision);
+      return phi::KernelFactory::Instance().SelectKernel(kernel_fn_str,
+                                                         kernel_key);
+    }
+    return phi::KernelFactory::Instance().SelectKernel(
+        kernel_fn_str,
+        phi::KernelKey(backend, phi::DataLayout::ALL_LAYOUT, precision));
   }
 
   bool OpSupportPrecision(pir::Operation* op,
@@ -197,6 +202,14 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       std::cout << "before GetPhiKernelSupportPrecision" << std::endl;
       auto phi_kernel =
           GetPhiKernelSupportPrecision(op, backend, precision_mode_);
+      PADDLE_ENFORCE(
+          phi_kernel.IsValid(),
+          phi::errors::PreconditionNotMet(
+              "op [%s] kernel doesn't support precision [%s] on backend [%s]",
+              op->name(),
+              phi::DataTypeToString(precision_mode_).c_str(),
+              paddle::experimental::BackendToString(backend).c_str()));
+
       auto args_def = phi_kernel.args_def();
       auto input_defs = args_def.input_defs();
       auto output_defs = args_def.output_defs();
@@ -229,10 +242,6 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
         result.set_type(new_type);
       }
       std::cout << "after modify outputs" << std::endl;
-
-      // out_dtype in_dtype attribute need modify
-
-      // fetch and feed
 
       // if any of the op's input is not in low precision, insert cast op
       LOG(INFO) << "Handle input, if dtype doesn't match, insert CastOp"
