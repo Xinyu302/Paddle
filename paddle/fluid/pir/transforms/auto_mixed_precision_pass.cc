@@ -253,13 +253,13 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       //     phi::errors::PreconditionNotMet(
       //         "op [%s] kernel input args defs should equal op inputs",
       //         op->name()));
-      int cnt = 0;
-      for (size_t i = 0; i < op->num_operands(); i++) {
+      for (size_t i = 0; i < input_defs.size();
+           i++) {  // input_defs will always be the smaller one?
         auto operand = op->operand(i);
         paddle::dialect::DenseTensorType origin_type =
             operand.type().dyn_cast<paddle::dialect::DenseTensorType>();
         if (!origin_type) continue;
-        auto in_phi_dtype = input_defs[cnt++].dtype;
+        auto in_phi_dtype = input_defs[i].dtype;
         if (!ValueInPrecision(operand.source(), in_phi_dtype)) {
           rewriter.SetInsertionPoint(op);  // before op
           paddle::dialect::CastOp cast_op =
