@@ -103,8 +103,13 @@
 #endif
 
 #include "paddle/fluid/ir_adaptor/translator/translate.h"
+<<<<<<< HEAD
 #include "paddle/fluid/pir/transforms/constant_folding_pass.h"
 #include "paddle/fluid/pir/transforms/auto_mixed_precision_pass.h"
+=======
+#include "paddle/fluid/pir/transforms/auto_mixed_precision_pass.h"
+#include "paddle/fluid/pir/transforms/constant_folding_pass.h"
+>>>>>>> fix compile error after rebase
 #include "paddle/fluid/pir/transforms/dead_code_elimination_pass.h"
 #include "paddle/fluid/pir/transforms/fusion/conv2d_fuse_pass.h"
 #include "paddle/fluid/pir/transforms/inplace_pass.h"

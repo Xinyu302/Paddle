@@ -261,7 +261,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
         if (!origin_type) continue;
         auto in_phi_dtype = input_defs[i].dtype;
         if (!ValueInPrecision(operand.source(), in_phi_dtype)) {
-          rewriter.SetInsertionPoint(op);  // before op
+          rewriter.set_insertion_point(op);  // before op
           paddle::dialect::CastOp cast_op =
               rewriter.Build<paddle::dialect::CastOp>(operand.source(),
                                                       in_phi_dtype);
@@ -275,7 +275,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
         // get the op's dtype
         auto result_dtype = pir::GetDataTypeFromValue(op->result(0));
         if (ValueInPrecision(operand.source(), precision_mode_)) {
-          rewriter.SetInsertionPoint(op);  // before op
+          rewriter.set_insertion_point(op);  // before op
           paddle::dialect::CastOp cast_op =
               rewriter.Build<paddle::dialect::CastOp>(
                   operand.source(),
@@ -374,11 +374,6 @@ class AutoMixedPrecisionPass : public pir::Pass {
   }
 
   void Run(pir::Operation* op) override {
-    // const auto& kernels = phi::KernelFactory::Instance().kernels();
-    // std::cout << "all kernel size = " << kernels.size() << std::endl;
-    // for (auto [k, v] : kernels) {
-    //   std::cout << "kernel name " << k << std::endl;
-    // }
     pir::GreedyRewriteConfig cfg;
     cfg.use_top_down_traversal = true;
     cfg.max_iterations = 10;
