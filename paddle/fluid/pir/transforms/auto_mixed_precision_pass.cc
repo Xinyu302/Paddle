@@ -84,11 +84,11 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
     //                     paddle::dialect::Conv2dOp::name(),
     //                     paddle::dialect::TransposeOp::name()});
     // return;
-    if (enable_low_precision_io_) {
-      white_list_.insert({
-          paddle::dialect::FetchOp::name(),
-      });
-    }
+    // if (enable_low_precision_io_) {
+    //   white_list_.insert({
+    //       paddle::dialect::FetchOp::name(),
+    //   });
+    // }
   }
 
   bool Match(pir::Operation* op) const override {
@@ -194,6 +194,11 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
     return KernelSupportPrecision(kernel_fn_str, backend, precision);
   }
 
+  bool RewriteFeedAndFetch(pir::operation* op) {
+    return enable_low_precision_io_ && (op->isa<paddle::dialect::FetchOp>() ||
+                                        op->isa<paddle::dialect::FeedOp>());
+  }
+
   bool ValueInPrecision(pir::Value value, phi::DataType precision) const {
     auto dtype = pir::GetDataTypeFromValue(value);
     return paddle::dialect::TransToPhiDataType(dtype) == precision;
@@ -232,6 +237,14 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       operand.set_source(cast_op->result(0));
     };
 
+    if (RewriteFeedAndFetch(op)) {
+      SetResultDataType(op->result(0), precision_mode_, rewriter.ir_context());
+      if (op->isa<paddle::dialect::FetchOp>()) {
+        InsertCastOp(op, op->operand(0), precision_mode_);
+      }
+      return;
+    }
+
     if (OpSupportPrecision(op, backend, precision_mode_)) {
       // change result's dtype to low precision
       LOG(INFO) << "Change result's dtype to low precision " << op->name()
@@ -241,16 +254,6 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
         pir::Attribute attr_dtype = paddle::dialect::DataTypeAttribute::get(
             rewriter.ir_context(), precision_mode_);
         op->set_attribute("dtype", attr_dtype);
-      }
-
-      if (op->isa<paddle::dialect::FetchOp>() ||
-          op->isa<paddle::dialect::FeedOp>()) {
-        SetResultDataType(
-            op->result(0), precision_mode_, rewriter.ir_context());
-        if (op->isa<paddle::dialect::FetchOp>()) {
-          InsertCastOp(op, op->operand(0), precision_mode_);
-        }
-        return;
       }
 
       auto phi_kernel =
