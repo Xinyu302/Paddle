@@ -237,11 +237,22 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       operand.set_source(cast_op->result(0));
     };
 
-    if (RewriteFeedAndFetch(op)) {
-      SetResultDataType(op->result(0), precision_mode_, rewriter.ir_context());
-      if (op->isa<paddle::dialect::FetchOp>()) {
-        InsertCastOp(op, op->operand(0), precision_mode_);
+    if (op->isa<paddle::dialect::FetchOp>()) {
+      auto fetch_operand = op->operand(0);
+      if (enable_low_precision_io) {
+        SetResultDataType(
+            op->result(0), precision_mode_, rewriter.ir_context());
       }
+      auto result_type = pir::GetDataTypeFromValue(op->result(0));
+      if (!ValueInPrecision(operand.source(), result_type)) {
+        InsertCastOp(
+            op, operand, paddle::dialect::TransToPhiDataType(result_dtype));
+      }
+      return;
+    }
+
+    if (op->isa<paddle::dialect::FeedOp>() && enable_low_precision_io) {
+      SetResultDataType(op->result(0), precision_mode_, rewriter.ir_context());
       return;
     }
 
@@ -287,9 +298,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       // input_defs will always be the smaller one?
       for (size_t i = 0; i < input_defs.size(); i++) {
         auto operand = op->operand(i);
-        paddle::dialect::DenseTensorType origin_type =
-            operand.type().dyn_cast<paddle::dialect::DenseTensorType>();
-        if (!origin_type) continue;
+        if (!opearand.type().isa<paddle::dialect::DenseTensorType>()) continue;
         auto in_phi_dtype = input_defs[i].dtype;
         if (!ValueInPrecision(operand.source(), in_phi_dtype)) {
           InsertCastOp(op, operand, in_phi_dtype);
@@ -297,10 +306,11 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       }
     } else {  // current op doesn't support low precision
       // if the op's input is in low precision, insert cast op
-      for (auto operand : op->operands()) {
-        // get the op's dtype
-        auto result_dtype = pir::GetDataTypeFromValue(op->result(0));
-        if (ValueInPrecision(operand.source(), precision_mode_)) {
+      auto result_dtype = pir::GetDataTypeFromValue(op->result(0));
+      for (size_t i = 0; i < op->num_operands(); i++) {
+        auto operand = op->operand(i);
+        if (!opearand.type().isa<paddle::dialect::DenseTensorType>()) continue;
+        if (!ValueInPrecision(operand.source(), result_dtype)) {
           InsertCastOp(
               op, operand, paddle::dialect::TransToPhiDataType(result_dtype));
         }
