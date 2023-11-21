@@ -199,32 +199,23 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
     return paddle::dialect::TransToPhiDataType(dtype) == precision;
   }
 
-  bool SetResultDataType(pir::Value result, phi::DataType precision) const {
+  void SetResultDataType(pir::Value result,
+                         phi::DataType precision,
+                         pir::IrContext* context) const {
     auto origin_type =
         result.type().dyn_cast<paddle::dialect::DenseTensorType>();
-    if (!origin_type) return false;
+    if (!origin_type || precision == phi::DataType::UNDEFINED) {
+      return;
+    }
     pir::Type new_type = paddle::dialect::DenseTensorType::get(
-        pir::IrContext::Instance(),
-        paddle::dialect::TransToIrDataType(precision),
+        context,
+        paddle::dialect::TransToIrDataType(precision, context),
         origin_type.dims(),
         origin_type.data_layout(),
         origin_type.lod(),
         origin_type.offset());
     result.set_type(new_type);
-    return true;
   }
-
-  // bool InsertCastOp(pir::Operation* op,
-  //                   pir::PatternRewriter& rewriter,
-  //                   pir::OpOperand operand,
-  //                   phi::DataType precision) const {
-  //   auto value = operand.source();
-  //   rewriter.set_insertion_point(op);  // before op
-  //   paddle::dialect::CastOp cast_op =
-  //       rewriter.Build<paddle::dialect::CastOp>(value, precision);
-  //   operand.set_source(cast_op->result(0));
-  //   return true;
-  // }
 
   void Rewrite(pir::Operation* op,
                pir::PatternRewriter& rewriter) const override {  // NOLINT
@@ -248,13 +239,14 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
 
       if (op->HasAttribute("dtype")) {
         pir::Attribute attr_dtype = paddle::dialect::DataTypeAttribute::get(
-            pir::IrContext::Instance(), precision_mode_);
+            rewriter.ir_context(), precision_mode_);
         op->set_attribute("dtype", attr_dtype);
       }
 
       if (op->isa<paddle::dialect::FetchOp>() ||
           op->isa<paddle::dialect::FeedOp>()) {
-        SetResultDataType(op->result(0), precision_mode_);
+        SetResultDataType(
+            op->result(0), precision_mode_, rewriter.ir_context());
         if (op->isa<paddle::dialect::FetchOp>()) {
           InsertCastOp(op, op->operand(0), precision_mode_);
         }
@@ -285,7 +277,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       for (size_t i = 0; i < op->num_results(); i++) {
         auto result = op->result(i);
         phi::DataType out_phi_dtype = output_defs[i].dtype;
-        SetResultDataType(result, out_phi_dtype);
+        SetResultDataType(result, out_phi_dtype, rewriter.ir_context());
       }
 
       // if any of the op's input is not in low precision, insert cast op
@@ -402,12 +394,15 @@ class AutoMixedPrecisionPass : public pir::Pass {
   void Run(pir::Operation* op) override {
     pir::GreedyRewriteConfig cfg;
     cfg.use_top_down_traversal = true;
-    cfg.max_iterations = 10;
+    cfg.max_iterations = 100;
     pir::ApplyPatternsGreedily(op->region(0), patterns_, cfg);
   }
 
   bool CanApplyOn(pir::Operation* op) const override {
-    return op->isa<::pir::ModuleOp>() && op->num_regions() > 0;
+    return op->isa<::pir::ModuleOp>() && op->num_regions() > 0 &&
+           place_ == paddle::PlaceType::kGPU &&
+           (precision_mode_ == phi::DataType::FLOAT16 ||
+            precision_mode_ == phi::DataType::BFLOAT16);
   }
 
  private:
