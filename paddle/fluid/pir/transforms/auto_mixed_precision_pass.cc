@@ -173,29 +173,63 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
           dense_type.lod(),
           dense_type.offset());
       result.set_type(new_type);
+    } else if (type.isa<pir::VectorType>()) {
+      auto vec_type = type.dyn_cast<pir::VectorType>();
+      auto output_num = vec_type.size();
+      std::vector<pir::Type> results_type(output_num);
+      for (size_t idx = 0; idx < output_num; ++idx) {
+        auto dense_type =
+            vec_type[idx].dyn_cast<paddle::dialect::DenseTensorType>();
+        auto new_type = paddle::dialect::DenseTensorType::get(
+            context,
+            paddle::dialect::TransToIrDataType(precision, context),
+            dense_type.dims(),
+            dense_type.data_layout(),
+            dense_type.lod(),
+            dense_type.offset());
+        results_type[idx] = new_type;
+      }
+      auto new_vec_type = pir::VectorType::get(context, results_type);
+      result.set_type(new_vec_type);
+    } else {
+      LOG(INFO) << "result type is not DenseTensorType or VectorType"
+                << std::endl;
     }
   }
 
   bool OpHasFloatResult(pir::Operation* op) const {
     for (size_t i = 0; i < op->num_results(); i++) {
       auto result = op->result(i);
+      if (!result.type()) continue;
       if (result.type().isa<paddle::dialect::DenseTensorType>()) {
         auto dtype = pir::GetDataTypeFromValue(result);
-        if (IsDtypeFloat(paddle::dialect::TransToPhiDataType(dtype))) {
+        if (IsDataTypeFloat(paddle::dialect::TransToPhiDataType(dtype))) {
           return true;
+        }
+      } else if (result.type().isa<pir::VectorType>()) {
+        auto vec_type = result.type().dyn_cast<pir::VectorType>();
+        for (size_t j = 0; j < vec_type.size(); j++) {
+          auto dtype =
+              vec_type[j].dyn_cast<paddle::dialect::DenseTensorType>().dtype();
+          if (IsDataTypeFloat(paddle::dialect::TransToPhiDataType(dtype))) {
+            return true;
+          }
         }
       }
     }
+    LOG(INFO) << "op " << op->name() << " doesn't have float result"
+              << std::endl;
     return false;
   }
 
-  bool IsDtypeFloat(const phi::DataType& dtype) const {
+  bool IsDataTypeFloat(const phi::DataType& dtype) const {
     return dtype == phi::DataType::FLOAT32 || dtype == phi::DataType::FLOAT16 ||
            dtype == phi::DataType::BFLOAT16;
   }
 
   void RewriteBuiltinOp(pir::Operation* op,
                         pir::PatternRewriter& rewriter) const {  // NOLINT
+    LOG(INFO) << "Rewrite builtin op " << op->name() << std::endl;
     // Rewrite CombineOp
     if (op->isa<pir::CombineOp>()) {
       // auto vec_type = op->result(0).type().dyn_cast<pir::VectorType>();
@@ -252,11 +286,11 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
 
   void RewritePdOp(pir::Operation* op,
                    pir::PatternRewriter& rewriter) const {  // NOLINT
-    LOG(INFO) << "Rewrite op " << op->name() << std::endl;
+    LOG(INFO) << "Rewrite pd op " << op->name() << std::endl;
     phi::Backend backend = ConvertPlaceToBackend(place_);
     // if the op support low precision
 
-    std::string op_type = op->name().substr(op->name().find("."));
+    std::string op_type = op->name().substr(op->name().find(".") + 1);
 
     if (!OpHasFloatResult(op)) return;
 
@@ -291,7 +325,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
                 << std::endl;
 
       if (op->HasAttribute("dtype")) {
-        if (!IsDtypeFloat(
+        if (!IsDataTypeFloat(
                 op->attribute<paddle::dialect::DataTypeAttribute>("dtype")
                     .data()))
           return;
@@ -299,6 +333,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
             rewriter.ir_context(), precision_mode_);
         op->set_attribute("dtype", attr_dtype);
       }
+      LOG(INFO) << "here !!" << std::endl;
 
       auto phi_kernel =
           GetPhiKernelSupportPrecision(op_type, backend, precision_mode_);
@@ -323,7 +358,11 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
 
       for (size_t i = 0; i < op->num_results(); i++) {
         auto result = op->result(i);
+        if (!result.type()) continue;
         phi::DataType out_phi_dtype = output_defs[i].dtype;
+        LOG(INFO) << "result dtype = " << phi::DataTypeToString(out_phi_dtype)
+                  << std::endl;
+        if (out_phi_dtype == phi::DataType::UNDEFINED) continue;
         SetResultDataType(result, out_phi_dtype, rewriter.ir_context());
       }
 
@@ -337,18 +376,22 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
           InsertCastOp(op, operand, in_phi_dtype, rewriter);
         }
       }
-    } else {  // current op doesn't support low precision
+    } else {  // current op doesn't support low precision, should cast to float
       // if the op's input is in low precision, insert cast op
-      if (!op->result(0).type().isa<paddle::dialect::DenseTensorType>()) return;
-      auto result_dtype = pir::GetDataTypeFromValue(op->result(0));
+      // if (!op->result(0).type().isa<paddle::dialect::DenseTensorType>())
+      // return; auto result_dtype = pir::GetDataTypeFromValue(op->result(0));
+      // auto phi_dtype = paddle::dialect::TransToPhiDataType(result_dtype);
+      auto phi_dtype = phi::DataType::FLOAT32;
+      if (!IsDataTypeFloat(phi_dtype)) return;
       for (size_t i = 0; i < op->num_operands(); i++) {
         auto operand = op->operand(i);
         if (!operand.type().isa<paddle::dialect::DenseTensorType>()) continue;
+        auto operand_dtype = pir::GetDataTypeFromValue(operand.source());
+        if (!IsDataTypeFloat(
+                paddle::dialect::TransToPhiDataType(operand_dtype)))
+          continue;
         if (ValueInPrecision(operand.source(), precision_mode_)) {
-          InsertCastOp(op,
-                       operand,
-                       paddle::dialect::TransToPhiDataType(result_dtype),
-                       rewriter);
+          InsertCastOp(op, operand, phi_dtype, rewriter);
         }
       }
     }
