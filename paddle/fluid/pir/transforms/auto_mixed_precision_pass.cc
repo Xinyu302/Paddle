@@ -94,7 +94,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
   bool Match(pir::Operation* op) const override {
     // if enable_low_precision_io_ is true, all the op will be transformed into,
     // input and output included
-    if (op->isa<pir::GetParameterOp>() || op->isa<pir::SetParameterOp>() ||
+    if (op->isa<pir::ParameterOp>() || op->isa<pir::SetParameterOp>() ||
         op->isa<paddle::dialect::CastOp>())
       return false;
 
@@ -107,7 +107,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
 
     // if the op didn't support low precision, and input is in low precision,
     // insert cast op if op support low precision and input is in low precision,
-    // ok otherwise, insert cast op if input is GetParameterOp, it must be
+    // ok otherwise, insert cast op if input is ParameterOp, it must be
     // transformed into a low precision tensor
 
     return true;
