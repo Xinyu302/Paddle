@@ -84,11 +84,6 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
     //                     paddle::dialect::Conv2dOp::name(),
     //                     paddle::dialect::TransposeOp::name()});
     // return;
-    // if (enable_low_precision_io_) {
-    //   white_list_.insert({
-    //       paddle::dialect::FetchOp::name(),
-    //   });
-    // }
   }
 
   bool Match(pir::Operation* op) const override {
@@ -102,20 +97,94 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       if (op->isa<paddle::dialect::FeedOp>()) return false;
     }
 
-    // Fetch op, if enable_low_precision_io_, transform result type
-    // Otherwise, check if the op's input is in low precision
-
-    // if the op didn't support low precision, and input is in low precision,
-    // insert cast op if op support low precision and input is in low precision,
-    // ok otherwise, insert cast op if input is ParameterOp, it must be
-    // transformed into a low precision tensor
-
     return true;
   }
 
-  phi::Kernel GetPhiKernelSupportPrecision(const std::string& kernel_fn_str,
-                                           phi::Backend backend,
-                                           phi::DataType precision) const {
+  void Rewrite(pir::Operation* op,
+               pir::PatternRewriter& rewriter) const override {  // NOLINT
+    LOG(INFO) << "Rewrite op " << op->name() << std::endl;
+    if (IsBuiltinOp(op)) {
+      RewriteBuiltinOp(op, rewriter);
+      return;
+    } else {
+      RewritePdOp(op, rewriter);
+      return;
+    }
+  }
+
+ private:
+  std::unordered_set<std::string> black_list_;
+  std::unordered_set<std::string> white_list_;
+  phi::DataType precision_mode_{phi::DataType::UNDEFINED};
+
+  phi::Place place_;
+  bool enable_low_precision_io_;
+
+  bool PhiKernelSupportPrecision(
+      const std::string& op_type,
+      phi::Backend backend,
+      phi::DataType data_type,
+      phi::DataLayout layout = phi::DataLayout::ALL_LAYOUT) const {
+    const auto& kernels = phi::KernelFactory::Instance().kernels();
+    if (kernels.count(op_type) == 0) {
+      return false;
+    }
+    phi::KernelKey kernel_key(backend, layout, data_type);
+    return phi::KernelFactory::Instance().HasKernel(op_type, kernel_key);
+  }
+
+  phi::Backend ConvertPlaceToBackend(const phi::Place& place) const {
+    switch (place.GetType()) {
+      case phi::AllocationType::CPU:
+        return phi::Backend::CPU;
+      case phi::AllocationType::GPU:
+        return phi::Backend::GPU;
+      case phi::AllocationType::XPU:
+        return phi::Backend::XPU;
+      default:
+        return phi::Backend::UNDEFINED;
+    }
+    return phi::Backend::UNDEFINED;
+  }
+
+  bool KernelSupportPrecision(
+      const std::string& op_type,
+      phi::Backend backend,
+      phi::DataType precision,
+      phi::DataLayout layout = phi::DataLayout::ALL_LAYOUT) const {
+    // it will return deprecated
+    // auto phi_op_type = phi::TransToPhiKernelName(op_type);
+    auto& phi_op_type = op_type;
+    LOG(INFO) << "phi_op_type = " << phi_op_type << std::endl;
+
+    bool support =
+        PhiKernelSupportPrecision(phi_op_type, backend, precision, layout);
+    if (backend == phi::Backend::GPU) {
+      support |= PhiKernelSupportPrecision(
+          phi_op_type, phi::Backend::GPUDNN, precision, layout);
+    }
+
+    if (!support) {
+      const auto& all_kernels =
+          paddle::framework::OperatorWithKernel::AllOpKernels();
+      auto it = all_kernels.find(op_type);
+      if (it != all_kernels.end()) {
+        for (const auto& kern_pair : it->second) {
+          if (ConvertPlaceToBackend(kern_pair.first.place_) == backend &&
+              kern_pair.first.data_type_ ==
+                  paddle::framework::TransToProtoVarType(precision)) {
+            support = true;
+            break;
+          }
+        }
+      }
+    }
+    return support;
+  }
+
+  phi::Kernel GetPhiKernelInPrecision(const std::string& kernel_fn_str,
+                                      phi::Backend backend,
+                                      phi::DataType precision) const {
     if (backend == phi::Backend::GPU) {
       if (PhiKernelSupportPrecision(
               kernel_fn_str, phi::Backend::GPUDNN, precision)) {
@@ -227,6 +296,17 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
            dtype == phi::DataType::BFLOAT16;
   }
 
+  void InsertCastOp(pir::Operation* op,
+                    pir::OpOperand operand,
+                    phi::DataType precision,
+                    pir::PatternRewriter& rewriter) const {  // NOLINT
+    auto value = operand.source();
+    rewriter.set_insertion_point(op);  // before op
+    paddle::dialect::CastOp cast_op =
+        rewriter.Build<paddle::dialect::CastOp>(value, precision);
+    operand.set_source(cast_op->result(0));
+  }
+
   void RewriteBuiltinOp(pir::Operation* op,
                         pir::PatternRewriter& rewriter) const {  // NOLINT
     LOG(INFO) << "Rewrite builtin op " << op->name() << std::endl;
@@ -262,34 +342,10 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
     }
   }
 
-  void Rewrite(pir::Operation* op,
-               pir::PatternRewriter& rewriter) const override {  // NOLINT
-    LOG(INFO) << "Rewrite op " << op->name() << std::endl;
-    if (IsBuiltinOp(op)) {
-      RewriteBuiltinOp(op, rewriter);
-      return;
-    } else {
-      RewritePdOp(op, rewriter);
-    }
-  }
-
-  void InsertCastOp(pir::Operation* op,
-                    pir::OpOperand operand,
-                    phi::DataType precision,
-                    pir::PatternRewriter& rewriter) const {  // NOLINT
-    auto value = operand.source();
-    rewriter.set_insertion_point(op);  // before op
-    paddle::dialect::CastOp cast_op =
-        rewriter.Build<paddle::dialect::CastOp>(value, precision);
-    operand.set_source(cast_op->result(0));
-  }
-
   void RewritePdOp(pir::Operation* op,
                    pir::PatternRewriter& rewriter) const {  // NOLINT
     LOG(INFO) << "Rewrite pd op " << op->name() << std::endl;
     phi::Backend backend = ConvertPlaceToBackend(place_);
-    // if the op support low precision
-
     std::string op_type = op->name().substr(op->name().find(".") + 1);
 
     if (!OpHasFloatResult(op)) return;
@@ -333,10 +389,9 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
             rewriter.ir_context(), precision_mode_);
         op->set_attribute("dtype", attr_dtype);
       }
-      LOG(INFO) << "here !!" << std::endl;
 
       auto phi_kernel =
-          GetPhiKernelSupportPrecision(op_type, backend, precision_mode_);
+          GetPhiKernelInPrecision(op_type, backend, precision_mode_);
       PADDLE_ENFORCE(
           phi_kernel.IsValid(),
           phi::errors::PreconditionNotMet(
@@ -382,89 +437,20 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       // return; auto result_dtype = pir::GetDataTypeFromValue(op->result(0));
       // auto phi_dtype = paddle::dialect::TransToPhiDataType(result_dtype);
       auto phi_dtype = phi::DataType::FLOAT32;
-      if (!IsDataTypeFloat(phi_dtype)) return;
       for (size_t i = 0; i < op->num_operands(); i++) {
         auto operand = op->operand(i);
         if (!operand.type().isa<paddle::dialect::DenseTensorType>()) continue;
         auto operand_dtype = pir::GetDataTypeFromValue(operand.source());
-        if (!IsDataTypeFloat(
-                paddle::dialect::TransToPhiDataType(operand_dtype)))
-          continue;
+        // if (!IsDataTypeFloat(
+        //         paddle::dialect::TransToPhiDataType(operand_dtype)))
+        //   continue;
+
+        // Only cast float16 or bfloat16 to float32
         if (ValueInPrecision(operand.source(), precision_mode_)) {
           InsertCastOp(op, operand, phi_dtype, rewriter);
         }
       }
     }
-  }
-
- private:
-  std::unordered_set<std::string> black_list_;
-  std::unordered_set<std::string> white_list_;
-  phi::DataType precision_mode_{phi::DataType::UNDEFINED};
-
-  phi::Place place_;
-  bool enable_low_precision_io_;
-
-  bool PhiKernelSupportPrecision(
-      const std::string& op_type,
-      phi::Backend backend,
-      phi::DataType data_type,
-      phi::DataLayout layout = phi::DataLayout::ALL_LAYOUT) const {
-    const auto& kernels = phi::KernelFactory::Instance().kernels();
-    if (kernels.count(op_type) == 0) {
-      return false;
-    }
-    phi::KernelKey kernel_key(backend, layout, data_type);
-    return phi::KernelFactory::Instance().HasKernel(op_type, kernel_key);
-  }
-
-  phi::Backend ConvertPlaceToBackend(const phi::Place& place) const {
-    switch (place.GetType()) {
-      case phi::AllocationType::CPU:
-        return phi::Backend::CPU;
-      case phi::AllocationType::GPU:
-        return phi::Backend::GPU;
-      case phi::AllocationType::XPU:
-        return phi::Backend::XPU;
-      default:
-        return phi::Backend::UNDEFINED;
-    }
-    return phi::Backend::UNDEFINED;
-  }
-
-  bool KernelSupportPrecision(
-      const std::string& op_type,
-      phi::Backend backend,
-      phi::DataType precision,
-      phi::DataLayout layout = phi::DataLayout::ALL_LAYOUT) const {
-    // it will return deprecated
-    // auto phi_op_type = phi::TransToPhiKernelName(op_type);
-    auto& phi_op_type = op_type;
-    LOG(INFO) << "phi_op_type = " << phi_op_type << std::endl;
-
-    bool support =
-        PhiKernelSupportPrecision(phi_op_type, backend, precision, layout);
-    if (backend == phi::Backend::GPU) {
-      support |= PhiKernelSupportPrecision(
-          phi_op_type, phi::Backend::GPUDNN, precision, layout);
-    }
-
-    if (!support) {
-      const auto& all_kernels =
-          paddle::framework::OperatorWithKernel::AllOpKernels();
-      auto it = all_kernels.find(op_type);
-      if (it != all_kernels.end()) {
-        for (const auto& kern_pair : it->second) {
-          if (ConvertPlaceToBackend(kern_pair.first.place_) == backend &&
-              kern_pair.first.data_type_ ==
-                  paddle::framework::TransToProtoVarType(precision)) {
-            support = true;
-            break;
-          }
-        }
-      }
-    }
-    return support;
   }
 };
 
