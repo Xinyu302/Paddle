@@ -97,6 +97,10 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       if (op->isa<paddle::dialect::FeedOp>()) return false;
     }
 
+    if (!IsBuiltinOp(op)) {
+      return OpHasFloatResult(op);
+    }
+
     return true;
   }
 
@@ -346,8 +350,6 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
     phi::Backend backend = ConvertPlaceToBackend(place_);
     std::string op_type = op->name().substr(op->name().find(".") + 1);
 
-    if (!OpHasFloatResult(op)) return;
-
     // Rewrite FetchOp
     if (op->isa<paddle::dialect::FetchOp>()) {
       auto fetch_operand = op->operand(0);
@@ -431,9 +433,6 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       }
     } else {  // current op doesn't support low precision, should cast to float
       // if the op's input is in low precision, insert cast op
-      // if (!op->result(0).type().isa<paddle::dialect::DenseTensorType>())
-      // return; auto result_dtype = pir::GetDataTypeFromValue(op->result(0));
-      // auto phi_dtype = paddle::dialect::TransToPhiDataType(result_dtype);
       auto phi_dtype = phi::DataType::FLOAT32;
       for (size_t i = 0; i < op->num_operands(); i++) {
         auto operand = op->operand(i);
