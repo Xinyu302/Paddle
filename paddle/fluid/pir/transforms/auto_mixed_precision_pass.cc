@@ -152,8 +152,6 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       phi::Backend backend,
       phi::DataType precision,
       phi::DataLayout layout = phi::DataLayout::ALL_LAYOUT) const {
-    // it will return deprecated
-    // auto phi_op_type = phi::TransToPhiKernelName(op_type);
     auto& phi_op_type = op_type;
     LOG(INFO) << "phi_op_type = " << phi_op_type << std::endl;
 
@@ -441,9 +439,9 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
         auto operand = op->operand(i);
         if (!operand.type().isa<paddle::dialect::DenseTensorType>()) continue;
         auto operand_dtype = pir::GetDataTypeFromValue(operand.source());
-        // if (!IsDataTypeFloat(
-        //         paddle::dialect::TransToPhiDataType(operand_dtype)))
-        //   continue;
+        if (!IsDataTypeFloat(
+                paddle::dialect::TransToPhiDataType(operand_dtype)))
+          continue;
 
         // Only cast float16 or bfloat16 to float32
         if (ValueInPrecision(operand.source(), precision_mode_)) {
