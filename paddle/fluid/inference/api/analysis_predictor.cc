@@ -103,8 +103,8 @@
 #endif
 
 #include "paddle/fluid/ir_adaptor/translator/translate.h"
-#include "paddle/fluid/pir/transforms/constant_folding_pass.h"
 #include "paddle/fluid/pir/transforms/auto_mixed_precision_pass.h"
+#include "paddle/fluid/pir/transforms/constant_folding_pass.h"
 #include "paddle/fluid/pir/transforms/dead_code_elimination_pass.h"
 #include "paddle/fluid/pir/transforms/fusion/conv2d_fuse_pass.h"
 #include "paddle/fluid/pir/transforms/inplace_pass.h"
@@ -773,11 +773,11 @@ bool AnalysisPredictor::PrepareExecutor() {
       ::pir::PassManager pm_for_op_program(::pir::IrContext::Instance(), 2);
       pm_for_op_program.AddPass(::pir::CreateConv2dFusePass());
 
-      pm_for_op_program.AddPass(::pir::CreateConstantFoldingPass(sub_scope_));
       // Do auto mixed precision pass first, so do not need to handle
       // shadowoutput.
       pm_for_op_program.AddPass(::pir::CreateAutoMixedPrecisionPass(
           place_, ConvertPrecision(config_.mixed_precision_mode_)));
+      pm_for_op_program.AddPass(::pir::CreateConstantFoldingPass(sub_scope_));
       pm_for_op_program.AddPass(::pir::CreateDeadCodeEliminationPass());
       pm_for_op_program.AddPass(
           ::pir::CreateReplaceFetchWithShadowOutputPass());
