@@ -427,7 +427,8 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
         auto operand = op->operand(i);
         if (!operand.type().isa<paddle::dialect::DenseTensorType>()) continue;
         auto in_phi_dtype = input_defs[i].dtype;
-        if (!ValueInPrecision(operand.source(), in_phi_dtype)) {
+        if (IsDataTypeFloat(in_phi_dtype) &&
+            !ValueInPrecision(operand.source(), in_phi_dtype)) {
           InsertCastOp(op, operand, in_phi_dtype, rewriter);
         }
       }
