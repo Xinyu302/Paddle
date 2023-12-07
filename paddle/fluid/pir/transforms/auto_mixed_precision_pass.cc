@@ -90,7 +90,8 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
     // if enable_low_precision_io_ is true, all the op will be transformed into,
     // input and output included
     if (op->isa<pir::ParameterOp>() || op->isa<pir::SetParameterOp>() ||
-        op->isa<paddle::dialect::CastOp>())
+        op->isa<paddle::dialect::CastOp>() ||
+        op->isa<paddle::dialect::FullIntArrayOp>())
       return false;
 
     if (!enable_low_precision_io_) {
@@ -298,6 +299,11 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
            dtype == phi::DataType::BFLOAT16;
   }
 
+  bool IsOperandDenseTensorType(pir::OpOperand operand) const {
+    return operand.type() &&
+           operand.type().isa<paddle::dialect::DenseTensorType>();
+  }
+
   void InsertCastOp(pir::Operation* op,
                     pir::OpOperand operand,
                     phi::DataType precision,
@@ -425,7 +431,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       // input_defs will always be the smaller one?
       for (size_t i = 0; i < input_defs.size(); i++) {
         auto operand = op->operand(i);
-        if (!operand.type().isa<paddle::dialect::DenseTensorType>()) continue;
+        if (!IsOperandDenseTensorType(operand)) continue;
         auto in_phi_dtype = input_defs[i].dtype;
         if (IsDataTypeFloat(in_phi_dtype) &&
             !ValueInPrecision(operand.source(), in_phi_dtype)) {
@@ -437,7 +443,7 @@ class AutoMixedPrecisionPattern : public pir::RewritePattern {
       auto phi_dtype = phi::DataType::FLOAT32;
       for (size_t i = 0; i < op->num_operands(); i++) {
         auto operand = op->operand(i);
-        if (!operand.type().isa<paddle::dialect::DenseTensorType>()) continue;
+        if (!IsOperandDenseTensorType(operand)) continue;
         auto operand_dtype = pir::GetDataTypeFromValue(operand.source());
         if (!IsDataTypeFloat(
                 paddle::dialect::TransToPhiDataType(operand_dtype)))
