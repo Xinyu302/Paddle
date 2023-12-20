@@ -4,6 +4,11 @@ cc_test(
   DEPS gtest op_dialect_vjp pir pir_transforms)
 
 cc_test(
+  auto_mixed_precision_test
+  SRCS auto_mixed_precision_test.cc
+  DEPS gtest pir pir_transforms)
+
+cc_test(
   drr_test
   SRCS drr_test.cc
   DEPS drr pir_transforms)
