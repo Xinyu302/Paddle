@@ -818,7 +818,7 @@ bool AnalysisPredictor::PrepareExecutor() {
         gpu_pm.AddPass(::pir::CreateReplaceFetchWithShadowOutputPass());
         //----------------------------------------------------------------------------------------------//
 
-        // gpu_pm.EnableIRPrinting();
+        gpu_pm.EnableIRPrinting();
         gpu_pm.Run(pir_program_.get());
       }
 
