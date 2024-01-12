@@ -541,7 +541,7 @@ class AutoMixedPrecisionPass : public pir::Pass {
   void RewritePdOp(pir::Operation* op,
                    pir::Builder& builder) {  // NOLINT
     std::string op_type = op->name().substr(op->name().find(".") + 1);
-
+    phi::Backend backend = ConvertPlaceToBackend(place_);
     // Rewrite FetchOp
     if (op->isa<paddle::dialect::FetchOp>()) {
       auto fetch_operand = op->operand(0);
