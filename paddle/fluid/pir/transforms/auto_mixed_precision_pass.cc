@@ -610,15 +610,6 @@ class AutoMixedPrecisionPass : public pir::Pass {
       VLOG(6) << "Change result's dtype to low precision " << op->name()
               << std::endl;
 
-      if (op->HasAttribute("dtype") &&
-          IsPhiDataTypeFloat(
-              op->attribute<paddle::dialect::DataTypeAttribute>("dtype")
-                  .data())) {
-        pir::Attribute attr_dtype = paddle::dialect::DataTypeAttribute::get(
-            builder.ir_context(), precision_mode_);
-        op->set_attribute("dtype", attr_dtype);
-      }
-
       auto phi_kernel =
           GetPhiKernelInPrecision(op_type, backend, precision_mode_);
       PADDLE_ENFORCE(
@@ -632,6 +623,40 @@ class AutoMixedPrecisionPass : public pir::Pass {
       auto args_def = phi_kernel.args_def();
       auto input_defs = args_def.input_defs();
       auto output_defs = args_def.output_defs();
+
+      // if any of the op's input is not in low precision, insert cast op
+      // input_defs will always be the smaller one?
+      for (size_t i = 0; i < input_defs.size(); i++) {
+        auto operand = op->operand(i);
+        auto in_phi_dtype = input_defs[i].dtype;
+        if (!IsOperandHasDenseTensorType(operand)) continue;
+        auto operand_phi_dtype = GetPhiDataTypeFromOpOperand(operand);
+        if (IsPhiDataTypeFloat(operand_phi_dtype) &&
+            operand_phi_dtype != in_phi_dtype) {
+          VLOG(6) << "Support low precision, insert CastOp for " << op->name()
+                  << " operand " << i << std::endl;
+          DoInsertCastOp(op, operand, in_phi_dtype, builder);
+        }
+      }
+
+      if (op->HasAttribute("dtype")) {
+        auto phi_dtype = op->attribute("dtype")
+                             .dyn_cast<paddle::dialect::DataTypeAttribute>()
+                             .data();
+        if (IsPhiDataTypeFloat(phi_dtype)) {
+          pir::Attribute attr_dtype = paddle::dialect::DataTypeAttribute::get(
+              builder.ir_context(), precision_mode_);
+          op->set_attribute("dtype", attr_dtype);
+        } else if (phi_dtype ==
+                   phi::DataType::UNDEFINED) {  // dtype is not set, means all
+                                                // ok
+          pir::Attribute attr_dtype = paddle::dialect::DataTypeAttribute::get(
+              builder.ir_context(), precision_mode_);
+          op->set_attribute("dtype", attr_dtype);
+        } else {
+          return;  // don't modify output dtype
+        }
+      }
 
       PADDLE_ENFORCE_EQ(
           op->num_results(),
@@ -652,21 +677,6 @@ class AutoMixedPrecisionPass : public pir::Pass {
           continue;  // here handle op like "unequal", which has bool result
                      // type
         SetResultDataType(result, out_phi_dtype, builder.ir_context());
-      }
-
-      // if any of the op's input is not in low precision, insert cast op
-      // input_defs will always be the smaller one?
-      for (size_t i = 0; i < input_defs.size(); i++) {
-        auto operand = op->operand(i);
-        auto in_phi_dtype = input_defs[i].dtype;
-        if (!IsOperandHasDenseTensorType(operand)) continue;
-        auto operand_phi_dtype = GetPhiDataTypeFromOpOperand(operand);
-        if (IsPhiDataTypeFloat(operand_phi_dtype) &&
-            operand_phi_dtype != in_phi_dtype) {
-          VLOG(6) << "Support low precision, insert CastOp for " << op->name()
-                  << " operand " << i << std::endl;
-          DoInsertCastOp(op, operand, in_phi_dtype, builder);
-        }
       }
     } else {  // current op doesn't support low precision, should cast to float
       // if the op's input is in low precision, insert cast op
