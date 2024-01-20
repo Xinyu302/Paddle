@@ -839,9 +839,7 @@ bool AnalysisPredictor::PrepareExecutor() {
         if (!config_.glog_info_disabled()) {
           gpu_pm.EnablePrintStatistics();
         }
-        if (config_.ir_debug_) {
-          gpu_pm.EnableIRPrinting();
-        }
+        gpu_pm.EnableIRPrinting();
         gpu_pm.Run(pir_program_.get());
       }
 
